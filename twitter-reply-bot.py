@@ -6,6 +6,7 @@ from langchain.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, H
 import schedule
 import time
 import os
+import logging
 
 # Helpful when testing locally
 from dotenv import load_dotenv
@@ -19,7 +20,7 @@ TWITTER_ACCESS_TOKEN_SECRET = os.getenv("TWITTER_ACCESS_TOKEN_SECRET", "YourKey"
 TWITTER_BEARER_TOKEN = os.getenv("TWITTER_BEARER_TOKEN", "YourKey")
 
 AIRTABLE_API_KEY = os.getenv("AIRTABLE_API_KEY", "YourKey")
-AIRTABLE_BASE_KEY = os.getenv("AIRTABLE_BASE_KEY", "YourKey")
+AIRTABLE_BASE_ID = os.getenv("AIRTABLE_BASE_ID", "YourKey")
 AIRTABLE_TABLE_NAME = os.getenv("AIRTABLE_TABLE_NAME", "YourKey")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "YourKey")
@@ -34,7 +35,21 @@ class TwitterBot:
                                          access_token_secret=TWITTER_ACCESS_TOKEN_SECRET,
                                          wait_on_rate_limit=True)
 
-        self.airtable = Airtable(AIRTABLE_BASE_KEY, AIRTABLE_TABLE_NAME, AIRTABLE_API_KEY)
+        # Set up logging
+        logging.basicConfig(level=logging.INFO)
+        self.logger = logging.getLogger(__name__)
+        
+        # Initialize Airtable
+        try:
+            self.airtable = Airtable(
+                AIRTABLE_BASE_ID,
+                AIRTABLE_TABLE_NAME,
+                api_key=AIRTABLE_API_KEY
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to initialize Airtable: {str(e)}")
+            self.airtable = None
+        
         self.twitter_me_id = self.get_me_id()
         self.tweet_response_limit = 35 # How many tweets to respond to each time the program wakes up
 
@@ -51,12 +66,12 @@ class TwitterBot:
         # It would be nice to bring in information about the links, pictures, etc. But out of scope for now
         # Edit this prompt for your own personality!
         system_template = """
-            You are an incredibly wise and smart tech blockchain enthusiasts from silicon valley.
-            Your goal is to give a concise explanation in response to a piece of text from the user.
+            You are an incredibly wise and smart tech mad scientist from silicon valley.
+            Your goal is to give a concise prediction in response to a piece of text from the user.
             
             % RESPONSE TONE:
 
-            - Your explanation should be given in an active voice and be opinionated
+            - Your prediction should be given in an active voice and be opinionated
             - Your tone should be serious w/ a hint of wit and sarcasm
             
             % RESPONSE FORMAT:
@@ -68,7 +83,7 @@ class TwitterBot:
             % RESPONSE CONTENT:
 
             - Include specific examples of old tech if they are relevant
-            - If you don't have an answer, say, "Sorry, my informant isn't active right now "
+            - If you don't have an answer, say, "Sorry, my magic 8 ball isn't working right now 🔮"
         """
         system_message_prompt = SystemMessagePromptTemplate.from_template(system_template)
 
@@ -140,11 +155,19 @@ class TwitterBot:
 
     # Checking to see if we've already responded to a mention with what's logged in airtable
     def check_already_responded(self, mentioned_conversation_tweet_id):
-        records = self.airtable.get_all(view='Grid view')
-        for record in records:
-            if record['fields'].get('mentioned_conversation_tweet_id') == str(mentioned_conversation_tweet_id):
-                return True
-        return False
+        if self.airtable is None:
+            self.logger.warning("Airtable is not initialized. Skipping check.")
+            return False
+        
+        try:
+            records = self.airtable.get_all(view='Grid view')
+            for record in records:
+                if record['fields'].get('mentioned_conversation_tweet_id') == str(mentioned_conversation_tweet_id):
+                    return True
+            return False
+        except Exception as e:
+            self.logger.error(f"Error checking Airtable: {str(e)}")
+            return False
 
     # Run through all mentioned tweets and generate a response
     def respond_to_mentions(self):
@@ -176,13 +199,15 @@ class TwitterBot:
 
 # The job that we'll schedule to run every X minutes
 def job():
-    print(f"Job executed at {datetime.utcnow().isoformat()}")
-    bot = TwitterBot()
-    bot.execute_replies()
+    try:
+        bot = TwitterBot()
+        bot.execute_replies()
+    except Exception as e:
+        logging.error(f"Error in job execution: {str(e)}")
 
 if __name__ == "__main__":
     # Schedule the job to run every 5 minutes. Edit to your liking, but watch out for rate limits
-    schedule.every(6).minutes.do(job)
+    schedule.every(2).minutes.do(job)
     while True:
         schedule.run_pending()
         time.sleep(1)
